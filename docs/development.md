@@ -12,11 +12,14 @@ cargo build --profile low-disk -p pdfcraft-cli
 cargo test --profile low-disk -p pdfcraft-cos --lib
 ```
 
-The profile inherits the normal development settings, including debug assertions and overflow
-checks. It uses line-table-only debug information for workspace code, which keeps file and line
-numbers in backtraces but omits local-variable and parameter details, and it disables incremental
-compilation for this profile only. Ordinary `cargo build`, `cargo test`, and release builds keep
-their existing profiles.
+The profile inherits the normal development settings, including debug assertions, overflow
+checks and line-table-only debug information, and disables incremental compilation for this
+profile only. Ordinary `cargo build` and `cargo test` keep incremental compilation.
+
+The development profile itself keeps only line tables for workspace code and no debug information
+for dependencies. Backtraces show file and line numbers but no local variables or parameters; for
+full debug information in workspace code (for a debugger), build with
+`CARGO_PROFILE_DEV_DEBUG=true`.
 
 Cargo stores custom-profile artifacts separately under `target/low-disk`. Switching between the
 normal and low-disk profiles can therefore leave both sets of artifacts on disk. To remove only
@@ -127,9 +130,24 @@ copies retain their current preferences locations.
 | `XDG_DATA_HOME` | Linux/FreeBSD: base of the log folder and crash recovery; previous preferences are migrated from here |
 | `WGPU_POWER_PREF` | GPU choice; by default PdfCraft draws on the GPU the Wayland compositor draws with (it says so through linux-dmabuf feedback), else the GPU that drives the primary display (Windows) or the built-in panel (Linux), else the low-power (integrated) GPU. The log says which one was chosen |
 | `WGPU_BACKEND` | Graphics backend; by default Windows uses Direct3D 12, falling back to OpenGL |
+| `WGPU_DX12_PRESENTATION_SYSTEM` | Windows, Direct3D 12: `hwnd` presents through a swap chain on the window itself, which Windows stretches while the window is resized (#2738); unset or `visual`, PdfCraft presents through a DirectComposition visual |
 | `WGPU_VALIDATION_INDIRECT_CALL` | `1` turns wgpu's check of indirect draw arguments back on. PdfCraft draws nothing indirectly and turns it off, since the compute shader the check needs fails to compile on some drivers (Metal on an Intel Iris Pro), which lost the device at start-up |
 | `PDFCRAFT_RENDERER` | `gl` starts with OpenGL (glow) and never loads wgpu; `wgpu` reports a wgpu failure instead of retrying with OpenGL; unset, wgpu is retried with OpenGL when it can't start (see [Renderer fallback](#renderer-fallback)) |
 | `PDFCRAFT_TITLEBAR` | Linux: `app` draws PdfCraft's own title bar (window buttons in the tab strip, in the order of GNOME's `button-layout`, and resize edges); `system` keeps the frame winit or the desktop draws; unset, PdfCraft draws its own when the Wayland compositor draws no frames (GNOME), and leaves it to the desktop otherwise (KDE, Sway, Hyprland, X11). Where PdfCraft draws it, Preferences ▸ Use system title bar switches back to winit's frame without a restart; `system` also hides that option |
 | `PDFCRAFT_BUILD_LABEL` | Build time: a label for a local or patched build (letters, digits, inner dots), shown after the version in `--version`, About and the log (`0.7.1 (titlebar)`). `packaging/linux/package.sh` also puts it in the file names and the .rpm/.deb release (`1.titlebar`), which upgrades over the release of the same version |
 | `CRAFT_FONTS_DIR` | Build time: a [craft-fonts](https://github.com/storytold/craft-fonts) checkout to embed (Japanese fonts) |
 | `PDFCRAFT_SYSTEM_FONTS` | `0` stops the desktop app from using an installed font for characters its embedded fonts lack (`cargo xtask screenshots` sets it) |
+| `FONTCONFIG_FILE` | On Linux/Unix, the Fontconfig configuration file used to discover installed UI fallback fonts (default: `/etc/fonts/fonts.conf`); relative filenames are resolved under `FONTCONFIG_PATH` |
+| `FONTCONFIG_PATH` | Directory for a relative `FONTCONFIG_FILE` (default: `/etc/fonts`; the first entry of a search path is used) |
+
+On Linux/Unix, the UI's existing fallback filenames are also searched in Fontconfig's configured
+directories and their subdirectories. This finds fonts in Nix store paths and user font directories
+without invoking `fc-match` or linking libfontconfig. The scan is cached and bounded; missing or
+malformed configuration leaves the ordinary `/usr/share/fonts` and `/usr/local/share/fonts`
+candidates available. Font size and glyph-coverage checks still apply. This only reads installed
+fonts for the interface; it does not embed them into PDFs or packages.
+
+Relative includes resolve beside the config that contains them. Included directories load only
+digit-prefixed `*.conf` files, in lexical order; backups and disabled files are ignored. The scan
+limits each config to 1 MiB, visits at most 256 config files/directories, and bounds include depth
+to 16 and directory entries to 32,768. Cyclic includes are skipped.
